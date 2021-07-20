@@ -1,0 +1,601 @@
+---
+title: 'Brain food: Animal-based food could affect your mental health'
+subtitle: "My Google Data Analytics Certificate capstone project about meat, dairy
+  and eggs consumption related with Alzheimer's disease and dementia"
+date: '`r Sys.Date()`'
+output:
+  html_document:
+    df_print: paged
+---
+
+```{css, echo=FALSE}
+body {
+  line-height: 150%;
+}
+h2, h3, h4, h5, h6 {
+  margin-bottom: 20px;
+  margin-top: 30px;
+}
+p, pre.r{
+  margin-bottom: 15px;
+}
+div.pagedtable-wrapper{
+  margin-bottom: 15px;
+}
+div.section.level2{
+  margin-top: 50px
+}
+```
+
+I recently finished the Google Data Analytics Certificate and I decided to practice and strengthen my skill-set by creating a project about food and health. I've always been concerned about mental health; specially Alzheimer's and dementia have always scared me.
+
+Most of us have already seen the "What the Health" documentary (if not, check it out) and we now know how bad animal-based products are for our health. In particular, the documentary talked about their effects on cardiovascular health, cancer and diabetes. Thhe aim of this project however, is focused on other health aspects and the investigation to discover something relevant by analyzing simple data. If there seems to be some correlation, then it's time for experts to start doing some research about this topic (even though there might already be some studies talking about this already).
+
+## 1. Introduction -- Ask
+
+My goal is to understand or uncover any relationship between certain Alzheimer's disease and dementia, and meat, eggs and dairy consumption. With diabetes it's already been proven that sugar causing it is a myth. Moreover, meat and dairy seem to be relevant causes.
+
+I want to study if there is somehow any type of correlation between developing dementia and nutrition. If proven, future medical studies should go further this research path. To be honest, I don't expect to find anything relevant. I want to believe that a lot of studies have already been done about this topic and it's been proven that these certain foods don't affect our mental health. I certainly don't know, that's why I want to see what I can find with this analysis, but if results show no correlation between them, then it's a good signal for our health anyway;)
+
+Going into detail, I'll be using yearly death rates per country for the disease and also data from yearly food consumption per country, all during a certain time span. I won't focus on a worldwide scale, since I think that it'd be more reliable if I focus on a certain area. My hypothesis is that data from some not-so-developed countries could be biased and affect reliability. That's why I think the EU is a good region to study: a lot of countries with some particularities each.
+
+Stakeholders could be anyone interested in getting to know if this correlation really exists or not. The audience could be dementia associations, even doctors and expert researchers. 
+
+My insights will be able to point the direction towards which scientists should do more research on.
+
+**Warning**: You'll probably see me using the term *animal-based food* some times during this analysis. This is technically incorrect because it will always refer to meat, milk and eggs, and will leave apart other animal-based food like fish, other dairy products... It's just a matter of simplicity.
+
+## 2. Prepare the Data
+
+Before working with the actual data, I want to make sure all the packages I'll be using are installed (shoutout to Pranav Pandya for this code, found [here](https://www.kaggle.com/pranav84/how-to-install-r-packages-like-a-pro-in-3-seconds)):
+
+```{r}
+mypack <- function(package){
+  new.package <- package[!(package %in% installed.packages()[, "Package"])]
+  if (length(new.package)) 
+    install.packages(new.package, dependencies = TRUE)
+  sapply(package, require, character.only = TRUE)
+}
+
+#create a vector of most used R packages
+packages <- c("tidyverse", "skimr", "eurostat", "cowplot", "ggpubr", "grid", "rworldmap")
+              
+mypack(packages)
+```
+
+Now it's time to look for the data. There's this website called [Our World in Data](https://www.ourworldindata.org) that contains almost the exact same datasets I need. Concretely:
+* Milk consumption per capita (kg)
+* Meat consumption per type per capita (kg)
+* Egg consumption per capita (kg)
+* Dementia death rates (per 100,000 individuals)
+
+They are all separate CSV files with similar structures and data for countries worldwide. All of them begin with three columns: **Entity**, **Code**, **Year**. Then, each one has its own metrics. In the case of food consumption CSVs, they contain one column containing the yearly kg per capita consumed by a person living in that country, that year (except for the meat CSV, which contains several columns like these, one for meat type). For the death rates, the metric column contains the number of deaths per 100,000 individuals, age-standardized.
+
+I'd have liked to have a dataset regarding dairy consumption instead of just milk, but I thought milk would be enough.
+
+Additionally, I'm using another set of data from [The World Bank](https://data.worldbank.org/indicator/SP.POP.TOTL?end=2019&name_desc=false&start=1960):
+* Population per country.
+
+This is formatted differently: it contains identification columns (like **Country Name** and **Country Code**), then some useless columns because they contain the same value in each row (**Indicator Name** and **Indicator Code**) and the rest are one column per year, from 1960 until 2019. These last columns, logically, contain the population for a certain country (individual/row) for that specific year (column). While the first datasets are long-formatted, this last is wide. I'll need to take care of this.
+
+But first, I'll focus on the first four:
+```{r}
+library(tidyverse) # Tidyverse contains most the libraries we're going to be using in this project: readr, janitor...
+
+dementia <- read.csv("../input/brain-food-data/dementia-death-rates.csv")
+meat <- read.csv("../input/brain-food-data/per-capita-meat-consumption.csv")
+egg <- read.csv("../input/brain-food-data/per-capita-egg-consumption.csv")
+milk <- read.csv("../input/brain-food-data/per-capita-milk-consumption.csv")
+population <- as.data.frame(read_delim("../input/brain-food-data/population.csv", delim = ";"))
+
+# Showing one as an example
+head(dementia)
+```
+
+Coming from [Our World in Data](https://www.ourworldindata.org), we already know it's reliable. Each dataset they provide is from a cited source, like the Institute for Health Metrics and Evaluation (IHME). I'm sure our data ROCCC's. Plus the datasets are so simple that it's easy to prove everything looks fine within.
+
+But there's one aspect we should highlight. We must know that the meat-consumption overestimates the average amount of food actually consumed because it is calculated as the food remaining for human use after deduction of all non-food utilities. Such values do not include consumption-level waste.
+
+## 3. Processing Data: Transform and clean
+
+As said, I have 4 datasets, three regarding food consumption (meet, milk, eggs) and one for diseases (Alzheimer's and dementia). I'll start by joining them to create two dataframes (I could join them into one but I prefer to do it later):
+
+* One for food consumption by country, per capita and year.
+* Another one for death rates by country, per year.
+```{r}
+food <- merge(x = meat, y = milk, by = c("Entity", "Code", "Year"))
+food <- merge(x = food, y = egg, by = c("Entity", "Code", "Year"))
+```
+
+I'll start simple: cleaning column names. I could use the clean_names function(), but names would still be long and distracting. I'll rename them instead and make them lowercase.
+
+```{r}
+food <- food %>%
+  rename(other_meat = Meat..Other..Food.supply.quantity..kg.capita.yr...FAO..2020., goat = Mutton...Goat.meat.food.supply.quantity..kg.capita.yr...FAO..2020., pigmeat = Pigmeat.food.supply.quantity..kg.capita.yr...FAO..2020., poultry = Poultry.meat.food.supply.quantity..kg.capita.yr...FAO..2020., bovine = Bovine.meat.food.supply.quantity..kg.capita.yr...FAO..2020., milk = Milk...Excluding.Butter...Food.supply.quantity..kg.capita.yr...FAO..2020., eggs = Eggs...Food.supply.quantity..kg.capita.yr...FAO..2020.) %>%
+  rename_with(tolower)
+
+disease <- dementia %>%
+  rename(alzheimer_and_dementia = Deaths...Alzheimer.disease.and.other.dementias...Sex..Both...Age..Age.standardized..Rate.) %>%
+  rename_with(tolower)
+```
+
+Let's now look both datasets closer and study their imperfections.
+
+```{r}
+library(skimr)
+skim_without_charts(food)
+```
+I like what I see at a first glance. Missing values appear only in the pigmeat column, probably due to Islamic nations not eating pork because it's considered _haram_. Let's prove it:
+
+```{r}
+food %>%
+  filter(is.na(pigmeat)) %>%
+  distinct(entity)
+```
+Effectively, all of them Islamic and makes sense they don't have data for pork consumption. As I'll be just using Europe's data, I don't care about these missing values. Moreover, I'll be filtering out non-EU countries in a few. But first, there's some cleaning we should do. To start off, I'll be removing useless columns (specifically, **code**).
+
+```{r}
+food <- select(food, -code)
+disease <- select(disease, -code)
+```
+
+Now, I'd like to know which years we should take into account. Let's check the food data first.
+
+```{r}
+library("eurostat")
+x_axis_labels <- min(food[,"year"]):max(food[,"year"])
+
+filter(food, entity %in% eu_countries$name) %>%
+  ggplot() +
+  geom_bar(mapping = aes(x = year), fill = "#7cb342") +
+  labs(title = 'Entries per year', subtitle = 'I want to know how much data we have for each year', 
+			 caption = 'Data collected by United Nations Food and Agricultural Organization (FAO)', x = "Year", y = "Count") +
+  theme(axis.text.x = element_text(angle = 90, hjust=0.5, size = 7)) +
+  scale_x_continuous(labels = x_axis_labels, breaks = x_axis_labels)
+```
+We have a considerably good amount of data starting from 1992. Studying these results better, I came across the solution to get all the data from all countries from 1992 to 2017. Basically, we know we should have 26 rows of data for each country, so any number below that amount should be studied. Based on what can be seen below, there's several combinations we can do to achieve that number. For example, what some years ago was Belgium-Luxembourg, would now be treated as both Belgium and Luxembourg. Czechoslovakia will be added to Czechia and Slovakia... The process is to go one by one and solve these political problems.
+
+```{r}
+select(food, c(entity, year)) %>%
+  group_by(entity) %>%
+  summarize(count = n()) %>%
+  filter(count < max(count))
+```
+Here's how I joined them and re-checked the previous bar plot:
+
+```{r}
+# Czechia and Slovakia
+cze_slo <- filter(food, entity == "Czechoslovakia")
+cze_slo["entity"][cze_slo["entity"] == "Czechoslovakia"] <- "Czechia"
+food <- rbind(food, cze_slo)
+cze_slo["entity"][cze_slo["entity"] == "Czechia"] <- "Slovakia"
+food <- rbind(food, cze_slo)
+
+# Belgium and Luxembourg
+bel_lux <- filter(food, entity == "Belgium-Luxembourg")
+bel_lux["entity"][bel_lux["entity"] == "Belgium-Luxembourg"] <- "Belgium"
+food <- rbind(food, bel_lux)
+bel_lux["entity"][bel_lux["entity"] == "Belgium"] <- "Luxembourg"
+food <- rbind(food, bel_lux)
+
+# Delete useless
+food <- filter(food, entity != "Belgium-Luxembourg" & entity != "Czechoslovakia")
+
+filter(food, entity %in% eu_countries$name) %>%
+  ggplot() +
+  geom_bar(mapping = aes(x = year), fill = "#7cb342") +
+  labs(title = 'Entries per year', subtitle = 'I want to know how much data we have for each year', 
+			 caption = 'Data collected by United Nations Food and Agricultural Organization (FAO)', x = "Year", y = "Count") +
+  theme(axis.text.x = element_text(angle = 90, hjust=0.5, size = 7)) +
+  scale_x_continuous(labels = x_axis_labels, breaks = x_axis_labels)
+```
+Perfect! We have food data for each and every country from 1992 to 2017.
+
+What about our disease's data?
+```{r}
+filter(disease, entity %in% eu_countries$name) %>%
+  ggplot() +
+    geom_bar(mapping = aes(x = year), fill = "#7cb342") +
+    labs(title = 'Entries per year', subtitle = 'I want to know how much data we have for each year', 
+  			 caption = 'Data collected by IHME, Global Burden of Disease (GBD)', x = "Year", y = "Count") +
+    theme(axis.text.x = element_text(angle = 90, hjust=0.5, size = 7)) +
+    scale_x_continuous(labels = x_axis_labels, breaks = x_axis_labels)
+```
+Luckily for us, the disease dataframe is already properly formatted and we don't need to do anything. From now on, I'll be using only data from 1992 to 2017 (both included) and only for EU countries.
+
+```{r}
+food <- filter(food, year >= 1992, entity %in% eu_countries$name)
+disease <- filter(disease, year >= 1992, entity %in% eu_countries$name)
+```
+
+We should check for duplicates too. 
+```{r}
+c(length(food[duplicated(food)]), length(disease[duplicated(disease)]))
+```
+
+Both have 0 duplicates, that's great! 
+
+In order to make it all simpler, I'll now merge both datasets so I can work with just one. I'll also order by entity just in case it's not ordered (may not be completely relevant but better keep things organized):
+
+```{r}
+df <- merge(food, disease, by = c("entity", "year"))
+df <- df[order(df$entity),]
+```
+
+At this point, I am pretty convinced that data is cleaned and doesn't need more transformations. This is how it looks:
+```{r}
+head(df)
+```
+Once this is perfect, I can now focus on the population dataset. Let's see how it looks first:
+```{r}
+head(population)
+```
+
+All I need to do is:
+
+1. Look for consistency in how countries are named: specifically, change Czech Republic for Czechia (though it should be the other way around because the country name's currently Czech Republic) and Slovak Republic for Slovakia. 
+2. Format the whole dataframe to be wide-formatted to be able to be merged with the other dataframe we've created. To do so, I'll use the **gather** function, which is really helpful for this kind of tasks.
+3. Join both datasets
+
+```{r}
+## First, convert Czech Republic to Czechia
+population["Country Name"][population["Country Name"] == "Czech Republic"] <- "Czechia"
+population["Country Name"][population["Country Name"] == "Slovak Republic"] <- "Slovakia"
+
+## Now, format the whole df
+population <- select(population, -"Country Code", - "Indicator Name", -"Indicator Code") %>%
+  gather("year", "population", -"Country Name") %>%
+  rename(entity = "Country Name") %>%
+  transform(year = as.numeric(year)) %>%
+  filter(entity %in% eu_countries$name, year >= 1992, year <= 2017) %>%
+  arrange(entity)
+
+## Finally, join both datasets
+df <- merge(df, population, by = c("entity", "year"))
+df
+```
+
+### 4. Analyze
+
+The first thing I want to do is see how diseases have changed in the EU during that 26-year time span. I'm not lucky here and I'll have to create an extra row for each country's population. This way, I can make computations and observe first how it has evolved in a more general way. To do so I'll use the population's dataset, which has been previously cleaned and prepared.
+
+I'm going to create now an extra column regarding overall meat consumption (sum of all types) and I'll also add 26 new rows with the "Europe" entity for each and every year so we have general data for the whole EU in terms of consumption per capita and deaths per 100,000 inhabitants.
+
+```{r}
+df <- mutate(df, meat = goat + other_meat + poultry + pigmeat + bovine)
+aux <- mutate(df, total_alzheimer_and_dementia = (alzheimer_and_dementia/100000)*population, total_meat = meat*population, total_milk = milk*population, total_eggs = eggs*population, total_goat = goat*population, total_other_meat = other_meat*population, total_poultry = poultry*population, total_pigmeat = pigmeat * population, total_bovine = bovine*population)
+
+for (y in 1992:2017){
+  totals <- sapply(select(filter(aux, year==y), -entity), sum)# ["population", "total_alzheimer_and_dementia"]
+  europe <- c("Europe", y, totals["total_goat"]/totals["population"], totals["total_other_meat"]/totals["population"], totals["total_poultry"]/totals["population"], totals["total_pigmeat"]/totals["population"], totals["total_bovine"]/totals["population"], totals["total_milk"]/totals["population"], totals["total_eggs"]/totals["population"])
+  europe <- append(europe, c((totals["total_alzheimer_and_dementia"]*100000)/totals["population"], totals["population"], totals["total_meat"]/totals["population"]))
+  df <- rbind(df, europe)
+}
+
+# Data to numeric (they somehow become characters after the previous code)
+i<- c("year", "goat", "other_meat", "poultry", "pigmeat", "bovine", "milk", "eggs", "alzheimer_and_dementia", "population", "meat")
+df[ , i] <- apply(df[ , i], 2, function(x) as.numeric(as.character(x)))
+```
+
+We're now ready to see a plot showing how Alzheimer's and dementia death rates have fluctuated over time in the EU.
+
+```{r}
+
+filter(df, entity == "Europe") %>%
+  ggplot(aes(x = year, y = alzheimer_and_dementia)) +
+    geom_line() +
+    expand_limits(y = 0) +
+    labs(title="Alzheimer's and Dementia death rates from 1992 to 2017", x = "Year", y = "Death rate", subtitle = "How death rates per 100,000 inhabitants have fluctuated overtime in the EU", caption = 'Data collected by IHME, Global Burden of Disease (GBD)')
+```
+
+Seen from this perspective, it looks like a pretty rectilinear tendency and it is positive because it decreases. From 1992 to 2017, during that 25-year time span, we've managed to reduce the overall death rates by 8%.
+
+I now want to see how the studied animal-based food consumption has moved overtime.
+
+```{r}
+library("cowplot")
+
+ggmeat <- filter(df, entity == "Europe") %>%
+  ggplot(mapping = aes(x = year, y = meat)) +
+    geom_line() +
+    expand_limits(y = 0) +
+    labs(title="Meat consumption (1992-2017)", x = "Year", y = "Meat")
+ggmilk <- filter(df, entity == "Europe") %>%
+  ggplot(mapping = aes(x = year, y = milk)) +
+    geom_line() +
+    expand_limits(y = 0) +
+    labs(title="Milk consumption (1992-2017)", x = "Year", y = "Milk")
+ggeggs <- filter(df, entity == "Europe") %>%
+  ggplot(mapping = aes(x = year, y = eggs)) +
+    geom_line() +
+    expand_limits(y = 0) +
+    labs(title="Eggs consumption (1992-2017)", x = "Year", y = "Eggs")
+plot_grid(ggmeat, ggmilk, ggeggs)
+```
+Well this is curious. Meat consumption has fluctuated (that's normal) but we can't say it has increased. Concretely, meat consumption in 1992 was 83.55kg per capita and it was 82.83kg in 2017; so it's a 0.86% decrease. In the case of milk, it has seen a slight increase: 4.37%. If we take a look at eggs here's where the decrease has been greater, a 7.49%.
+
+It's still early to draw any conclusions but these numbers seem interesting to me, specially the "huge" drop eggs suffered from.
+
+I want to see how the three types of food consumption correlate with Alzheimer's death rates choosing a random year.
+```{r}
+library("ggpubr")
+y = 2017
+
+ggmeat <- filter(df, year == y) %>%
+  ggscatter(x = "alzheimer_and_dementia", y = "meat", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          ylab = "Meat kg per capita", xlab = "Alzheimer's and dementia death rate per 100,000 people",
+          title = "Meat consumption vs Alzheimer's and dementia death rates",
+          subtitle = as.character(y),
+          size = 0.5
+          ) +
+  theme(text = element_text(size=8))
+ggmilk <- filter(df, year == y) %>%
+  ggscatter(x = "alzheimer_and_dementia", y = "milk", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          ylab = "Milk kg per capita", xlab = "Alzheimer's and dementia death rate per 100,000 people",
+          title = "Milk consumption vs Alzheimer's and dementia death rates",
+          subtitle = as.character(y),
+          size = 0.5
+          )+
+  theme(text = element_text(size=8))
+ggeggs <- filter(df, year == y) %>%
+  ggscatter(x = "alzheimer_and_dementia", y = "eggs", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          ylab = "Egg kg per capita", xlab = "Alzheimer's and dementia death rate per 100,000 people",
+          title = "Egg consumption vs Alzheimer's and dementia death rates",
+          subtitle = as.character(y),
+          size = 0.5
+          )+
+  theme(text = element_text(size=8))
+
+plot_grid(ggmeat, ggmilk, ggeggs)
+```
+Using the common 5% significance level (which indicates that the risk of concluding that a correlation exists--when, actually, no correlation exists--is 5%) I can conclude that all plots show significant linear correlation in that year (because all p-values are below that threshold). I could even use a 1% significance level and the conclusions would be the same. Now, this doesn't mean there's a causal relationship. Only an expert scientist can do the research to prove that, if necessary.
+
+Going one by one:
+* **Meat** is negatively correlated which means that the more meat seems to be consumed, the less deaths there are from Alzheimer's and dementia.
+* **Milk** is positively correlated which means just the opposite: the more milk we consume, the more death rates increase.
+* **Eggs**, like meat, show a negative correlation. Though still significant, they are the food that show less correlation with Alzheimer's and dementia death rates.
+
+These plots were the results of one year, but we're studying 26 here. I want to see how the Pearson correlation coefficient (R) fluctuated during that time span.
+
+```{r}
+corrs <- c()
+labels <- c()
+for (food in c("meat", "milk", "eggs")){
+  for (y in 1992:2017){
+    aux <- filter(df, year == y)
+    corrs <- append(corrs, cor(aux$alzheimer_and_dementia, aux[food]))
+    labels <- append(labels, food)
+  }
+}
+corrs_df <- data.frame(
+  "year" = 1992:2017,
+  "corr" = corrs,
+  "food" = labels
+)
+ggplot(corrs_df, aes(x=year, y=corr, group=food, color=food)) +
+  geom_line() +
+  labs(title = "Correlation fluctuation", subtitle = "How correlation between studied foods and dementia's death rates varied from 1992 to 2017.", y = "Correlation", x = "Year")+
+  expand_limits(y = 0)
+```
+Well it clearly changes overtime. 2006 seems interesting to me: eggs and milk all show almost 0 correlation and, even though meat's was on its lowest point, its p-value is 0.074 (bigger than 0.05) so it's also not considered significant. Apart from that, the shape looks curious to me. I don't understand why milk and egg correlation dropped so low and, at the same time, meat consumption's correlation kind of exploded (knowing that 2006 was an ordinary year in terms of consumption and death rates, as seen on previous plots).
+
+Anyway, let's keep on going.
+
+Until now, nothing relevant has been found. Instead of focusing on the whole EU, I'll start now taking a closer look at countries individually and I can't think of a better way than using a map and showing death rates from Alzheimer's and dementia by country.
+
+```{r}
+library("grid")
+library("rworldmap")
+
+worldMap <- getMap()
+indEU <- which(worldMap$NAME%in%append(eu_countries$name, "Czech Rep."))
+
+europeCoords <- lapply(indEU, function(i){
+  df <- data.frame(worldMap@polygons[[i]]@Polygons[[1]]@coords)
+  df$region =as.character(worldMap$NAME[i])
+  colnames(df) <- list("long", "lat", "region")
+  return(df)
+})
+
+europeCoords <- do.call("rbind", europeCoords)
+europeCoords$region[europeCoords$region == "Czech Rep."] <- "Czechia"
+
+europeCoords$alzheimers <- filter(df, entity != "Europe", year == 2017)$alzheimer_and_dementia[match(europeCoords$region,filter(df, entity != "Europe", year == 2017)$entity)]
+centroids_df <- as.data.frame(coordinates(worldMap))
+names(centroids_df) <- c("Longitude", "Latitude")
+centroids_df["Czechia",] <- c(centroids_df["Czech Republic",]$Longitude, centroids_df["Czech Republic",]$Latitude)
+europeCoords$centroid_x <- centroids_df$Longitude[match(europeCoords$region, rownames(centroids_df))]
+europeCoords$centroid_y <- centroids_df$Latitude[match(europeCoords$region, rownames(centroids_df))]
+
+P <- ggplot(data = europeCoords) + geom_polygon(aes(x = long, y = lat, group = region, fill = alzheimers), color = "black", size = 0.1)# + coord_map(xlim = c(-13, 35),  ylim = c(32, 71))
+P <- P + scale_fill_gradient(name = "Alzheimer's Death Rate", low = "#FFEC00", high = "#E74C3C", na.value = "grey50")
+P <- P + theme(#panel.grid.minor = element_line(colour = NA), panel.grid.minor = element_line(colour = NA),
+               plot.background = element_rect(fill = NA, colour = "black", size = 1),
+               panel.background = element_rect(fill = NA, colour = NA),
+               axis.text.x = element_blank(),
+               axis.text.y = element_blank(), axis.ticks.x = element_blank(),
+               axis.ticks.y = element_blank(), axis.title = element_blank(),
+               text = element_text(size = 12, face = "plain"))
+               #rect = element_blank(),
+               #plot.margin = unit(0 * c(-1,5, 0, -1.5, -1.5), "lines"))
+P +
+  geom_text(aes(label = round(alzheimers, 2), x = centroid_x, y = centroid_y, fontface = "plain"), size = 2.5) #round(alzheimers, 2)
+```
+
+We can now see a general overview of the countries and where they rank in terms of death rates. Finland's the worst and by a considerable difference with the second, the UK. The best is Cyprus, which is barely visible due to its small size, followed by Lithuania and Slovenia. 
+
+This was nice to see to gain a good perspective of the data we're looking at. I think it's time to show some more plots comparing food consumption per country in the chosen year (2017). **The following plots will be ordered by death rates, in a decreasing order**. That means the first country on the left will be Finland, and the country on the right extreme will be Cyprus.
+
+```{r}
+a <- pivot_longer(df, c("meat", "milk", "eggs"), names_to = "food", values_to = "food_kg") %>%
+  filter(entity != "Europe", year == 2017)
+
+ggplot(a) +
+  geom_bar(aes(fill=food, y=food_kg, x=reorder(entity, -alzheimer_and_dementia)), position="stack", stat="identity") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(x = "Countries (decreasingly ordered by death rates)", y = "Fodd consumption", title = "Food consumption per country")
+p0 <- ggplot(filter(df, year==2017, entity != "Europe")) +
+  geom_bar(aes(y=eggs, x=reorder(entity, -alzheimer_and_dementia)), position="dodge", stat="identity", fill="#7cb342") +
+  geom_hline(yintercept = filter(df, year == 2017, entity == "Europe")$eggs) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.position = "none") +
+  labs(x = "", y = "kg", title = "Eggs")
+p1 <- ggplot(filter(df, year==2017, entity != "Europe")) +
+  geom_bar(aes(y=meat, x=reorder(entity, -alzheimer_and_dementia)), position="dodge", stat="identity", fill="#7cb342") +
+  geom_hline(yintercept = filter(df, year == 2017, entity == "Europe")$meat) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.position = "none") +
+  labs(x = "", y = "kg", title = "Meat")
+plot_grid(p0, p1, align = "v", nrow = 2, label_size = 10) #labels = c("Egg", "Meat") 
+```
+There's a lot of information in these three simple graphs, which is great. 
+
+The first bar plot basically shows food consumption per country. As said, countries are ordered by death rate. Each bar's height is the result of the sum of that country's eggs, meat and milk consumption. Each color, as the legend suggests, shows consumption for each particular type of food. 
+
+The next two bar plots show eggs and meat consumption, respectively. The horizontal line is the EU's average. I did this because milk is easy to compare on the first plot but these two aren't that easy, so I thought creating an independent plot for each one would be easier to comprehend. The best way would probably have been to create a single bar plot with three columns per country, one per type of food, but it wasn't visually appealing and we wouldn't have had the opportunity to see the accumulated values per country.
+
+Some insights:
+
+* Finland's clearly the country that consumes the most accumulated quantity of these foods in the EU, followed by Lithuania, Estonia and the Netherlands. Actually, this is due to their **high milk** consumption.
+* Egg consumption is way smaller than milk (we already had the opportunity to see it on the tables above). Curiously, the top three countries in terms of more deaths are below the EU's mean, but the next three are way above.
+* The worst 7 countries in terms of death rates are below the average kg of meat consumed per capita in the EU. This is curious, though the deviations aren't that big in some countries and those best three are also below the mean.
+
+Knowing all this, I want to focus now solely on meat types.
+
+```{r}
+p0 <- ggplot(filter(df, year==2017, entity != "Europe")) +
+  geom_bar(aes(y=bovine, x=reorder(entity, -alzheimer_and_dementia)), position="dodge", stat="identity", fill="#7cb342") +
+  geom_hline(yintercept = filter(df, year == 2017, entity == "Europe")$bovine) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.position = "none") +
+  labs(x = "", y = "Bovine kg")
+p1 <- ggplot(filter(df, year==2017, entity != "Europe")) +
+  geom_bar(aes(y=goat, x=reorder(entity, -alzheimer_and_dementia)), position="dodge", stat="identity", fill="#7cb342") +
+  geom_hline(yintercept = filter(df, year == 2017, entity == "Europe")$goat) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.position = "none") +
+  labs(x = "", y = "Goat kg")
+p2 <- ggplot(filter(df, year==2017, entity != "Europe")) +
+  geom_bar(aes(y=pigmeat, x=reorder(entity, -alzheimer_and_dementia)), position="dodge", stat="identity", fill="#7cb342") +
+  geom_hline(yintercept = filter(df, year == 2017, entity == "Europe")$pigmeat) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.position = "none") +
+  labs(x = "", y = "Pigmeat kg")
+p3 <- ggplot(filter(df, year==2017, entity != "Europe")) +
+  geom_bar(aes(y=poultry, x=reorder(entity, -alzheimer_and_dementia)), position="dodge", stat="identity", fill="#7cb342") +
+  geom_hline(yintercept = filter(df, year == 2017, entity == "Europe")$poultry) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.position = "none") +
+  labs(x = "", y = "Poultry kg")
+
+plot_grid(p0, p1, align = "v", nrow = 2) +
+  annotate("text",x=0.5,y=1.04,size=5,label="Bovine and goat meat consumption") +
+  theme(plot.margin = unit(c(1,0.5,0.5,0.5), "cm")) +
+  scale_y_continuous(breaks=NULL)+scale_x_continuous(breaks=NULL) +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank()) 
+
+plot_grid(p2, p3, align = "v", nrow = 2)+
+  annotate("text",x=0.5,y=1.04,size=5,label="Pig and poultry meat consumption") +
+  theme(plot.margin = unit(c(1,0.5,0.5,0.5), "cm")) +
+  scale_y_continuous(breaks=NULL)+scale_x_continuous(breaks=NULL) +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank()) 
+```
+Four out of the five countries with a highest death ratio (Finland, UK, Luxembourg and Netherlands) consume more bovine meat than the average while three out of the best five (Hungary, Lithuania, Cyprus) are way below that threshold. This somehow seems interesting, even though it certainly doesn't tell us anything because we find a great density of high-bovine meat consumers right in the middle, where countries aren't healthy nor high-in-deaths in terms of dementia and Alzheimer's (Malta, Greece, Italy, Sweden, Ireland, Portugal, France).
+
+If we focus on goat, I don't see anything to point out.
+
+The pigmeat plot deserves our attention. We see that the first 6 countries (Finland, UK, Bulgaria, Luxembourg, Netherlands and Romania), the ones with more deaths per 100,000 inhabitants, consume a relatively small amount of it. If we focus on the other extreme, we see that Lithuania, Austria, Hungary and Germany are consuming generous amounts of pigmeat and they are four of the top six in terms of less deaths. This is interesting too, even though I still don't find it conclusive, based on the fact that there's no pattern to follow here. These might be just coincidences (or maybe not).
+
+Poultry, again, shows something similar. Except for the UK, the other countries around it on our left are low poultry consumers. If move to the right, then we see Cyprus, Lithuania, Slovenia and Hungary being above the average. This, again, might seem to suggest that poultry is good for preventing Alzheimer's and dementia (just like pigmeat), but there's no certain pattern that confirms it.
+
+I now want to go even more specific and focus on **Finland and Cyprus**. More specifically, I want to see their evolution during all those years considering all variables.
+
+```{r}
+df %>%
+  filter(entity %in% c("Finland", "Cyprus")) %>%
+  ggplot() +
+    geom_line(aes(x = year, y = alzheimer_and_dementia, color = entity)) +
+    labs(title = "Alzheimer and dementia death rates for Cyprus and Finland", x = "Year", y = "deaths per 100,000 inhabitants", subtitle = "How death rates have fluctuated from 1992 until 2017")
+```
+This looks particularly interesting. Cyprus had always been better in terms of fewer deaths, but the difference between both remained the same until 2004, where Cyprus started decreasing their rate, and 2006, where Finland increased theirs. Again, I think this could be something important. Something changed around those years, let's see if consumption changed too.
+
+```{r}
+df <- mutate(df, food = meat + milk + eggs)
+
+df %>%
+  filter(entity %in% c("Finland", "Cyprus")) %>%
+  ggplot() +
+    geom_line(aes(x = year, y = food, color = entity)) +
+    labs(title = "Animal-based food consumption for Cyprus and Finland", x = "Year", y = "kg per capita", subtitle = "Sum of milk, meat and eggs eaten per capita from 1992 until 2017")
+```
+Attention! Let's look at them one by one:
+
+* **Cyprus** had their peak in 1995, with 245.06 kg per capita, followed by 2001 and, surprise, 2004 (this one with 243.80 kg per capita). Then, from 2004 on until now, we can see a decreasing tendency overtime.
+* **Finland**'s line is even more exaggerated. It's easy to see that since 2006 it's been increasing at a high pace (28.84% in just 11 years).
+
+This is huge. Something happened since 2004 in Cyprus, 2006 in Finland, that made animal-based food consumption change its direction as well as Alzheimer's and dementia death rates. This suggests a clear correlation, but it's difficult to determine if they also have a causal relationship without doing a proper research conducted by scientists. What we can do, based on what we've found, is start believing that animal-based food could affect our mental health.
+
+Right next to Finland, we have the UK, with 16.79 less deaths per 100,000 (which is a considerable difference, in my opinion). On the other hand, the second country with an inferior death rate is Lithuania, with just 3.15 more deaths by 100,000 inhabitants (compare that with the 16.79 difference). Let's see if we can find a similar pattern:
+
+```{r}
+df %>%
+  filter(entity %in% c("United Kingdom", "Lithuania")) %>%
+  ggplot() +
+    geom_line(aes(x = year, y = alzheimer_and_dementia, color = entity)) +
+    labs(title = "Alzheimer and dementia death rates for the UK and Lithuania", x = "Year", y = "deaths per 100,000 inhabitants", subtitle = "How death rates have fluctuated from 1992 until 2017")
+```
+
+```{r}
+df %>%
+  filter(entity %in% c("United Kingdom", "Lithuania")) %>%
+  ggplot() +
+    geom_line(aes(x = year, y = food, color = entity)) +
+    labs(title = "Animal-based food consumption for the UK and Lithuania", x = "Year", y = "kg per capita", subtitle = "Sum of milk, meat and eggs eaten per capita from 1992 until 2017")
+```
+Well this is telling us very different things:
+* The **United Kingdom** has increased its death rates overtime, especially since 2009. If we look at their overall animal-based food consumption, it has seen a slight decrease from 2010.
+* **Lithuania**'s death rate plot looks good because it's been decreasing at a nice pace. Talking about pace, the increase in their animal-based food consumption has been even faster. Moreover, each inhabitant averages more than 100kg more milk, meat and eggs than the UK citizens. 
+
+This suggests right the opposite than what was found with Cyprus and Finland, right? Well, not quite. It does suggest that the more milk, meat and eggs we eat, the less deaths from Alzheimer's and dementia there are. But it doesn't strongly suggest that the less animal-based food we eat, the higher the death rate (because UK's decrease in this type of food consumption is small).
+
+What's more, the difference between Lithuania's death rates and UK's is 10.78 per 100,000 inhabitants. In the case of Cyprus and Finland, the difference was 30.72 per 100,000 inhabitants. I'm highlighting this because obviously Alzheimer's and dementia depend on a lot more other factors, not just nutrition. A 10.78-person difference could be just the result of better medicines, genes or any other reason you could think of. But a 30.72 difference is a lot, 3 times as much, and these must be studied thoroughly.
+
+## 5. Conclusions
+Alzheimer's disease and dementia had decreased an 8% from 1992 until 2017 in the EU. Curiously, egg consumption has seen a 7.49% decrease, while meat consumption has practically remained the same and milk has increased a 4.37%.
+
+Finland was, in 2017, the country with more deaths per 100,000 inhabitants (55.54, ~20 deaths above the EU's mean) and Cyprus had the lowest rate (24.82, ~10 deaths below the average in the EU), in 2017.
+
+Looking at these two countries evolution overtime, Finland's death rates have skyrocketed since 2006, just like their animal-based food consumption. On the other hand, Cyprus' death rates decreased from 2004, again, just like their animal-based food consumption. This shows a clear correlation between meat, milk and eggs consumption and the death rates from Alzheimer's and dementia, between these two countries. This is particularly interesting in the case of Finland, because it's highly deviated from the mean (especially for death rates and milk consumption) and their meat consumption has also increased in the last decade.
+
+This, though, isn't enough to say meat, milk and eggs directly affect our mental health. We've seen how the UK and Lithuania follow different paths in terms of what they consume, so there's not a clear pattern. In fact, Lithuania's food consumption has skyrocketed since 1998 (and it's the second best country in terms of fewest deaths from Alzheimer's and dementia).
+
+The overall conclusion is that **foods could affect our mental health** and, particularly, our chances of suffering Alzheimer's and dementia, but data doesn't clearly show proofs of that (though it generates enough doubts to aim for future research).
+
+## 6. Improvement and Next Steps
+
+### Improvement
+
+This analysis was performed by a Junior Data Analyst so there's always room for improvement. One possible improvement could have been focusing on a shorter time span, starting at 2000 or 2005. That way, data would probably have been more reliable (logic says the latter, the better).'
+
+Another improvement would have been using dairy datasets instead of just focusing on milk.
+
+### Next Steps
+
+Improving this analysis by using what was said above or going deeper into the data research is a possible next step to try to gather more conclusive conclusions. Then, if results seem promising, the next steps revolve around scientists doing a proper medical/biological research on nutrition and their effect on our brain health. This is obviously out of scope for any data analyst, but experts could keep on with it and try to improve the population's health.
+
+If proven that animal-based food is bad, further studies should be made on plant-based food and its effects on our brains.
+
+Once performed, important people and institutions should act upon the findings. If plant-based food has actually a good effect nutritionists and every single expert out there should adapt to these conclusions and start improving the world's mental health.
+
+## 7. References
+
+Only two sources have been used to retrieve data: 
+
+* [The World Bank](https://data.worldbank.org/indicator/SP.POP.TOTL?end=2019&name_desc=false&start=1960).
+* [Our World in Data](https://www.ourworldindata.org).
+
+Data's sources:
+
+* United Nations Food and Agricultural Organization (FAO): **Meat, milk and eggs consumption per capita and country, overtime**.
+* IHME, Global Burden of Disease (GBD): **Alzheimer's and dementia death rates per country, overtime**.
+* ( 1 ) United Nations Population Division. World Population Prospects: 2019 Revision. ( 2 ) Census reports and other statistical publications from national statistical offices, ( 3 ) Eurostat: Demographic Statistics, ( 4 ) United Nations Statistical Division. Population and Vital Statistics Reprot ( various years ), ( 5 ) U.S. Census Bureau: International Database, and ( 6 ) Secretariat of the Pacific Community: Statistics and Demography Programme: **World's population overtime**.
